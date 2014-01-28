@@ -2,8 +2,9 @@ require 'json'
 require 'faye/websocket'
 require 'rack/static'
 require 'securerandom'
+require 'ostruct'
 
-class Clientside
+module Clientside
   module Accessible
     class << self
       attr_accessor :cur_os
@@ -37,7 +38,8 @@ class Clientside
     def to_json(*args)
       name = self.class.name
       methods = self.class.js_allowed
-      h = {__clientside__: true, __clientside_id__: object_id, methods: methods}
+      h = {__clientside__: true, __clientside_id__: object_id,
+           methods: methods}
       h.to_json *args
     end
   end
@@ -45,8 +47,10 @@ class Clientside
   class NoResMiddleware
     RPATH = '/__clientside_sock__/'
     MAX_OBJECTS = 256
+    PENDING_TTL = 5 * 60
 
     @@pending_sockets = {}
+    @@pending_expiries = []
     @@sockets = {}
 
     def initialize(app)
@@ -58,11 +62,18 @@ class Clientside
     end
 
     def handle_message(cmd, ws)
-      raise unless cmd[:receiver].kind_of? Clientside::Accessible
-      allowed = cmd[:receiver].class.js_allowed
-      raise unless allowed.include? cmd[:method].to_sym
+      can_receive = cmd.receiver.kind_of? Accessible
+      raise "receiver is not js-accessible" unless can_receive
+      is_name = cmd.method_.respond_to? :to_sym
+      raise "not a method name: #{cmd.method_}" unless is_name
+      allowed = cmd.receiver.class.js_allowed.include? cmd.method_.to_sym
+      raise "unknown method: #{cmd.method_}" unless allowed
 
-      result = cmd[:receiver].send cmd[:method], *cmd[:arguments]
+      begin
+        result = cmd.receiver.send cmd.method_, *cmd.arguments
+      rescue ArgumentError => e
+        raise e.message
+      end
       o_tj_source = JSON::Ext::Generator::GeneratorMethods::Object
       result = nil if result.method(:to_json).owner.equal? o_tj_source
 
@@ -70,14 +81,16 @@ class Clientside
         unless @@sockets[ws].length >= MAX_OBJECTS
           register_obj ws, result 
         else
-          raise
+          raise "too many objects allocated"
         end
       end
-      ws.send JSON.dump({status: 'success', id: cmd[:id], result: result})
+      ws.send JSON.dump({status: 'success', id: cmd.id, result: result})
     end
 
     def call(env)
-      if Faye::WebSocket.websocket? env and env['REQUEST_PATH'].start_with? RPATH
+      is_websocket = Faye::WebSocket.websocket? env
+      for_us = env['REQUEST_PATH'].start_with? RPATH
+      if is_websocket and for_us
         env['REQUEST_PATH'] =~ %r(\A#{RPATH}(.+)\Z)
         cid = $1
         objs = @@pending_sockets.delete(cid)
@@ -92,10 +105,27 @@ class Clientside
         ws.on :message do |event|
           begin
             cmd = JSON.parse event.data, symbolize_names: true
-            cmd = Clientside::Accessible.reinflate cmd, @@sockets[ws]
+            needed = [:receiver, :method_, :arguments, :id]
+            unless needed.all? {|k| cmd.key? k}
+              if cmd.key? :id
+                ws.send JSON.dump({status: 'error',
+                                   message: 'invalid request', id: cmd[:id]})
+              end
+              next
+            end
+            cmd = Accessible.reinflate cmd, @@sockets[ws]
+            cmd = OpenStruct.new cmd
             handle_message cmd, ws
-          rescue RuntimeError, KeyError => e
-            ws.send JSON.dump({status: 'error', id: cmd[:id]})
+          rescue JSON::ParserError
+          rescue KeyError => e
+            e.message =~ /\Akey not found: (.+)\Z/
+            missing_id = $1
+            message = "unknown object id: #{missing_id}"
+            ws.send JSON.dump({status: 'error',
+                               message: message, id: cmd.id})
+          rescue RuntimeError => e
+            ws.send JSON.dump({status: 'error',
+                               message: e.message, id: cmd.id})
           end
         end
 
@@ -114,6 +144,11 @@ class Clientside
       objs = Hash[objs.map {|o| [o.object_id, o]}]
       cid = SecureRandom.hex
       @@pending_sockets[cid] = objs
+      @@pending_expiries << [cid, Time.now + PENDING_TTL]
+      until @@pending_expiries.first[1] > Time.now
+        ecid, _ = @@pending_expiries.shift
+        @@pending_sockets.delete ecid
+      end
       cid
     end
   end
@@ -128,9 +163,9 @@ class Clientside
 
   def self.embed(objs)
     objs.each do |var, obj|
-      raise ArgumentError, "invalid js var name" unless var =~ /\A[a-zA-Z_]\w*\Z/
+      raise ArgumentError, "invalid var name" unless var =~ /\A[a-zA-Z_]\w*\Z/
     end
-    cid = Clientside::Middleware.add_pending objs.values
+    cid = Middleware.add_pending objs.values
     sock_var = '$__clientside_socket__'
     js = ""
     js << %Q(<script src="/__clientside_res__/promise.min.js"></script>\n)
@@ -150,5 +185,5 @@ class Clientside
   end
 end
 
-# vim:tabstop=2 shiftwidth=2 noexpandtab:
+# vim:tabstop=2 shiftwidth=2 expandtab:
 

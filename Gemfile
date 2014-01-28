@@ -1,5 +1,8 @@
 source "https://rubygems.org"
 
-gem 'faye-websocket'
-gem 'rack'
+gem 'pry'
+gem 'rainbows'
+gem 'sinatra'
+
+gemspec
 

@@ -6,17 +6,17 @@
 <%= Clientside.embed remotePrinter: @p %>
 <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.0/jquery.min.js"></script>
 <script>
-	$(function() {
-		$("#send").click(function() {
-			var text = $("#text").val();
-			remotePrinter.display(text);
-		});
-	});
+$(function() {
+    $("#send").click(function() {
+        var text = $("#text").val();
+        remotePrinter.display(text);
+    });
+});
 </script>
 </head>
 <body>
-	<input id="text" type="text"><br>
-	<button type="button" id="send">Send</button>
+    <input id="text" type="text"><br>
+    <button type="button" id="send">Send</button>
 </body>
 </html>
 

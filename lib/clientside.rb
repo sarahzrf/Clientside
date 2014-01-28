@@ -1,6 +1,7 @@
 require 'json'
 require 'faye/websocket'
 require 'rack/static'
+require 'securerandom'
 
 class Clientside
 	module Accessible
@@ -79,8 +80,7 @@ class Clientside
 			if Faye::WebSocket.websocket? env and env['REQUEST_PATH'].start_with? RPATH
 				env['REQUEST_PATH'] =~ %r(\A#{RPATH}(.+)\Z)
 				cid = $1
-				key = [env['REMOTE_ADDR'], cid]
-				objs = @@pending_sockets.delete(key)
+				objs = @@pending_sockets.delete(cid)
 
 				unless objs.nil?
 					ws = Faye::WebSocket.new(env)
@@ -110,11 +110,10 @@ class Clientside
 			end
 		end
 
-		def self.add_pending(ip, objs)
+		def self.add_pending(objs)
 			objs = Hash[objs.map {|o| [o.object_id, o]}]
-			@cur_cid ||= 0
-			cid = (@cur_cid += 1).to_s
-			@@pending_sockets[[ip, cid]] = objs
+			cid = SecureRandom.hex
+			@@pending_sockets[cid] = objs
 			cid
 		end
 	end
@@ -128,11 +127,10 @@ class Clientside
 	end
 
 	def self.embed(objs)
-		ip = '127.0.0.1'
 		objs.each do |var, obj|
 			raise ArgumentError, "invalid js var name" unless var =~ /\A[a-zA-Z_]\w*\Z/
 		end
-		cid = Clientside::Middleware.add_pending ip, objs.values
+		cid = Clientside::Middleware.add_pending objs.values
 		sock_var = '$__clientside_socket__'
 		js = ""
 		js << %Q(<script src="/__clientside_res__/promise.min.js"></script>\n)
@@ -141,7 +139,7 @@ class Clientside
 		objs.each do |var, obj|
 			js << %Q(\tvar #{var};\n)
 		end
-		js << %Q(\tvar #{sock_var} = makeClientsideSocket(#{cid});\n)
+		js << %Q(\tvar #{sock_var} = makeClientsideSocket("#{cid}");\n)
 		js << %Q(\t#{sock_var}.onopen = function() {\n)
 		objs.each do |var, obj|
 			json = JSON.dump obj

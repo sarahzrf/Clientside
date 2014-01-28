@@ -45,7 +45,7 @@ class Clientside
 		RPATH = '/__clientside_sock__/'
 		MAX_OBJECTS = 256
 
-		@@expected_sockets = {}
+		@@pending_sockets = {}
 		@@sockets = {}
 
 		def initialize(app)
@@ -80,7 +80,7 @@ class Clientside
 				env['REQUEST_PATH'] =~ %r(\A#{RPATH}(.+)\Z)
 				cid = $1
 				key = [env['REMOTE_ADDR'], cid]
-				objs = @@expected_sockets.delete(key)
+				objs = @@pending_sockets.delete(key)
 
 				unless objs.nil?
 					ws = Faye::WebSocket.new(env)
@@ -109,6 +109,14 @@ class Clientside
 				@app.call env
 			end
 		end
+
+		def self.add_pending(ip, objs)
+			objs = Hash[objs.map {|o| [o.object_id, o]}]
+			@cur_cid ||= 0
+			cid = (@cur_cid += 1).to_s
+			@@pending_sockets[[ip, cid]] = objs
+			cid
+		end
 	end
 
 	class Middleware < NoResMiddleware
@@ -117,6 +125,30 @@ class Clientside
 			dir = File.dirname(__FILE__)
 			@app = Rack::Static.new(@app, urls: ['/__clientside_res__'], root: dir)
 		end
+	end
+
+	def self.embed(objs)
+		ip = '127.0.0.1'
+		objs.each do |var, obj|
+			raise ArgumentError, "invalid js var name" unless var =~ /\A[a-zA-Z_]\w*\Z/
+		end
+		cid = Clientside::Middleware.add_pending ip, objs.values
+		sock_var = '$__clientside_socket__'
+		js = ""
+		js << %Q(<script src="/__clientside_res__/promise.min.js"></script>\n)
+		js << %Q(<script src="/__clientside_res__/clientside.js"></script>\n)
+		js << %Q(<script>\n)
+		objs.each do |var, obj|
+			js << %Q(\tvar #{var};\n)
+		end
+		js << %Q(\tvar #{sock_var} = makeClientsideSocket(#{cid});\n)
+		js << %Q(\t#{sock_var}.onopen = function() {\n)
+		objs.each do |var, obj|
+			json = JSON.dump obj
+			js << %Q(\t\t#{var} = makeClientsideProxy(#{sock_var}, #{json});\n)
+		end
+		js << %Q(\t};\n)
+		js << %Q(</script>\n)
 	end
 end
 

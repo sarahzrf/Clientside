@@ -1,5 +1,6 @@
 require 'json'
 require 'faye/websocket'
+require 'rack/static'
 
 class Clientside
 	module Accessible
@@ -20,7 +21,7 @@ class Clientside
 				case json
 				when Hash
 					if json[:__clientside__]
-						os.fetch json[:id]
+						os.fetch json[:__clientside_id__]
 					else
 						Hash[json.map {|k, v| [k, reinflate(v, os)]}]
 					end
@@ -35,12 +36,13 @@ class Clientside
 		def to_json(*args)
 			name = self.class.name
 			methods = self.class.js_allowed
-			{__clientside__: true, id: object_id, methods: methods}.to_json *args
+			h = {__clientside__: true, __clientside_id__: object_id, methods: methods}
+			h.to_json *args
 		end
 	end
 
-	class Middleware
-		RPATH = '/__clientside__/'
+	class NoResMiddleware
+		RPATH = '/__clientside_sock__/'
 		MAX_OBJECTS = 256
 
 		@@expected_sockets = {}
@@ -54,14 +56,7 @@ class Clientside
 			@@sockets[ws][obj.object_id] = obj
 		end
 
-		def handle_message(data, ws)
-			cmd = JSON.parse data, symbolize_names: true
-			begin
-				cmd = Clientside::Accessible.reinflate cmd, @@sockets[ws]
-			rescue KeyError
-				raise "invalid object used"
-			end
-
+		def handle_message(cmd, ws)
 			raise unless cmd[:receiver].kind_of? Clientside::Accessible
 			allowed = cmd[:receiver].class.js_allowed
 			raise unless allowed.include? cmd[:method].to_sym
@@ -77,7 +72,7 @@ class Clientside
 					raise
 				end
 			end
-			ws.send JSON.dump({status: 'success', result: result})
+			ws.send JSON.dump({status: 'success', id: cmd[:id], result: result})
 		end
 
 		def call(env)
@@ -96,9 +91,11 @@ class Clientside
 
 				ws.on :message do |event|
 					begin
-						handle_message event.data, ws
-					rescue RuntimeError => e
-						ws.send JSON.dump({status: 'error'})
+						cmd = JSON.parse event.data, symbolize_names: true
+						cmd = Clientside::Accessible.reinflate cmd, @@sockets[ws]
+						handle_message cmd, ws
+					rescue RuntimeError, KeyError => e
+						ws.send JSON.dump({status: 'error', id: cmd[:id]})
 					end
 				end
 
@@ -111,6 +108,14 @@ class Clientside
 			else
 				@app.call env
 			end
+		end
+	end
+
+	class Middleware < NoResMiddleware
+		def initialize(*args)
+			super
+			dir = File.dirname(__FILE__)
+			@app = Rack::Static.new(@app, urls: ['/__clientside_res__'], root: dir)
 		end
 	end
 end

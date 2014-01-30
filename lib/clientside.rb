@@ -3,8 +3,11 @@ require 'faye/websocket'
 require 'rack/static'
 require 'securerandom'
 require 'ostruct'
+require 'erb'
 
 module Clientside
+  GEM_DIR = File.dirname(__FILE__)
+
   module Accessible
     class << self
       attr_accessor :cur_os
@@ -156,8 +159,8 @@ module Clientside
   class Middleware < NoResMiddleware
     def initialize(*args)
       super
-      dir = File.dirname(__FILE__)
-      @app = Rack::Static.new(@app, urls: ['/__clientside_res__'], root: dir)
+      @app = Rack::Static.new(
+        @app, urls: ['/__clientside_res__'], root: GEM_DIR)
     end
   end
 
@@ -166,22 +169,7 @@ module Clientside
       raise ArgumentError, "invalid var name" unless var =~ /\A[a-zA-Z_]\w*\Z/
     end
     cid = Middleware.add_pending objs.values
-    sock_var = '$__clientside_socket__'
-    js = ""
-    js << %Q(<script src="/__clientside_res__/promise.min.js"></script>\n)
-    js << %Q(<script src="/__clientside_res__/clientside.js"></script>\n)
-    js << %Q(<script>\n)
-    objs.each do |var, obj|
-      js << %Q(var #{var};\n)
-    end
-    js << %Q(var #{sock_var} = makeClientsideSocket("#{cid}");\n)
-    js << %Q(#{sock_var}.onopen = function() {\n)
-    objs.each do |var, obj|
-      json = JSON.dump obj
-      js << %Q(    #{var} = makeClientsideProxy(#{sock_var}, #{json});\n)
-    end
-    js << %Q(};\n)
-    js << %Q(</script>\n)
+    ERB.new(File.read(GEM_DIR + '/embed.erb'), nil, '-').result(binding)
   end
 end
 

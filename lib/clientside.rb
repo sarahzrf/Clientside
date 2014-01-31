@@ -9,16 +9,12 @@ module Clientside
   GEM_DIR = File.dirname(__FILE__)
 
   module Accessible
-    class << self
-      attr_accessor :cur_os
+    def self.included(base)
+      base.singleton_class.class_eval do
+        attr_reader :js_allowed
 
-      def included(base)
-        base.singleton_class.class_eval do
-          attr_reader :js_allowed
-
-          def js_allow(*args)
-            (@js_allowed ||= []).concat args
-          end
+        def js_allow(*args)
+          (@js_allowed ||= []).concat args
         end
       end
 
@@ -166,7 +162,11 @@ module Clientside
 
   def self.embed(objs)
     objs.each do |var, obj|
-      raise ArgumentError, "invalid var name" unless var =~ /\A[a-zA-Z_]\w*\Z/
+      if not var =~ /\A[a-zA-Z_]\w*\Z/
+        raise ArgumentError, "invalid var name: #{var}"
+      elsif not obj.kind_of? obj
+        raise ArgumentError, "non-js-allowed object: #{obj}"
+      end
     end
     cid = Middleware.add_pending objs.values
     ERB.new(File.read(GEM_DIR + '/embed.erb'), nil, '-').result(binding)

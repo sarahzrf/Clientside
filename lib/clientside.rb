@@ -18,7 +18,7 @@ module Clientside
         end
       end
 
-      def reinflate(json, os)
+      def self.reinflate(json, os)
         case json
         when Hash
           if json[:__clientside__]
@@ -78,7 +78,7 @@ module Clientside
 
       if result.kind_of? Accessible
         unless @@sockets[ws].length >= MAX_OBJECTS
-          register_obj ws, result 
+          register_obj ws, result
         else
           raise "too many objects allocated"
         end
@@ -164,7 +164,7 @@ module Clientside
     objs.each do |var, obj|
       if not var =~ /\A[a-zA-Z_]\w*\Z/
         raise ArgumentError, "invalid var name: #{var}"
-      elsif not obj.kind_of? obj
+      elsif not obj.kind_of? Accessible
         raise ArgumentError, "non-js-allowed object: #{obj}"
       end
     end

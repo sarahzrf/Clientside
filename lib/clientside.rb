@@ -1,5 +1,6 @@
 require 'json'
 require 'faye/websocket'
+require 'rack/file'
 require 'rack/static'
 require 'securerandom'
 require 'ostruct'

@@ -1,7 +1,10 @@
 <script src="/__clientside_res__/promise.min.js"></script>
 <script src="/__clientside_res__/clientside.js"></script>
 <script>
-var $__clientside_socket__ = makeClientsideSocket("<%= cid %>");
+var $clientsideResolve;
+var $clientsideInit = new Promise(function(resolve) {
+    $clientsideResolve = resolve;
+});
 <% objs.each do |var, obj| -%>
 var <%= var %>;
 <% end -%>
@@ -10,7 +13,9 @@ function $__clientside_init__() {
 <% json = JSON.dump obj -%>
     <%= var %> = makeClientsideProxy($__clientside_socket__, <%= json %>);
 <% end -%>
+    $clientsideResolve();
 }
+var $__clientside_socket__ = makeClientsideSocket("<%= cid %>");
 $__clientside_socket__.onopen = $__clientside_init__;
 if ($__clientside_socket__.readyState == 1 && !<%= objs.keys.first %>) {
     $__clientside_init__();
